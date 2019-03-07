@@ -17,6 +17,7 @@ from torch.autograd import Variable
 ### load project files
 import models
 from models import weights_init
+from models import WLoss
 
 from data_loader import PokemonDataset
 
@@ -54,13 +55,13 @@ parser.add_argument('--binary', action='store_true', help='z from bernoulli dist
 #     '--niter', '80',
 #     '--lr', '0.0002',
 #     '--beta1', '0.5',
-#     '--cuda', 
+#     '--cuda',
 #     '--ngpu', '1',
 #     '--netG', '',
 #     '--netD', '',
 #     '--outDir', './results',
 #     '--model', '1',
-#     '--d_labelSmooth', '0.1', # 0.25 from imporved-GAN paper 
+#     '--d_labelSmooth', '0.1', # 0.25 from imporved-GAN paper
 #     '--n_extra_layers_d', '0',
 #     '--n_extra_layers_g', '1', # in the sense that generator should be more powerful
 # ]
@@ -91,7 +92,7 @@ cudnn.benchmark = True
 
 if torch.cuda.is_available() and not opt.cuda:
     print("WARNING: You have a CUDA device, so you should probably run with --cuda")
-    
+
 nc = 3
 ngpu = opt.ngpu
 nz = opt.nz
@@ -105,7 +106,7 @@ dataloader = torch.utils.data.DataLoader(pokemon_dataset, batch_size=opt.batchSi
                                          shuffle=True, num_workers=opt.workers)
 
 
-# load models 
+# load models
 if opt.model == 1:
     netG = models._netG_1(ngpu, nz, nc, ngf, n_extra_g)
     netD = models._netD_1(ngpu, nz, nc, ndf, n_extra_d)
@@ -123,7 +124,7 @@ if opt.netD != '':
     netD.load_state_dict(torch.load(opt.netD))
 print(netD)
 
-criterion = nn.BCELoss()
+criterion = WLoss()
 criterion_MSE = nn.MSELoss()
 
 input = torch.FloatTensor(opt.batchSize, 3, opt.imageSize, opt.imageSize)
@@ -144,7 +145,7 @@ if opt.cuda:
     criterion_MSE.cuda()
     input, label = input.cuda(), label.cuda()
     noise, fixed_noise = noise.cuda(), fixed_noise.cuda()
-    
+
 input = Variable(input)
 label = Variable(label)
 noise = Variable(noise)
@@ -169,10 +170,8 @@ for epoch in range(opt.niter):
         input.data.resize_(real_cpu.size()).copy_(real_cpu)
         label.data.resize_(batch_size).fill_(real_label - opt.d_labelSmooth) # use smooth label for discriminator
 
-        output = netD(input)
-        errD_real = criterion(output, label)
-        errD_real.backward()
-        D_x = output.data.mean()
+        output_real = netD(input)
+        D_x = output_real.data.mean()
         # train with fake
         noise.data.resize_(batch_size, nz, 1, 1)
         if opt.binary:
@@ -182,10 +181,14 @@ for epoch in range(opt.niter):
             noise.data.normal_(0, 1)
         fake,z_prediction = netG(noise)
         label.data.fill_(fake_label)
-        output = netD(fake.detach()) # add ".detach()" to avoid backprop through G
-        errD_fake = criterion(output, label)
+        output_fake = netD(fake.detach()) # add ".detach()" to avoid backprop through G
+
+        errD_real = criterion(True, output_real, output_fake)
+        errD_real.backward()
+
+        errD_fake = criterion(False, None, output_fake)
         errD_fake.backward() # gradients for fake/real will be accumulated
-        D_G_z1 = output.data.mean()
+        D_G_z1 = output_fake.data.mean()
         errD = errD_real + errD_fake
         optimizerD.step() # .step() can be called once the gradients are computed
 
@@ -202,7 +205,7 @@ for epoch in range(opt.niter):
             errG_z.backward()
         D_G_z2 = output.data.mean()
         optimizerG.step()
-        
+
         end_iter = time.time()
         print('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f Elapsed %.2f s'
               % (epoch, opt.niter, i, len(dataloader),

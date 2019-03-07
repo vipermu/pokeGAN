@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.parallel
 
-
 def weights_init(m):
     classname = m.__class__.__name__
     if classname.find('Conv') != -1:
@@ -10,6 +9,23 @@ def weights_init(m):
     elif classname.find('BatchNorm') != -1:
         m.weight.data.normal_(1.0, 0.02)
         m.bias.data.fill_(0)
+
+
+# Custom Wasserstein loss function
+class WLoss(nn.Module):
+    def __init__(self):
+        super(WLoss, self).__init__()
+
+    def forward(self, is_discriminator, d_real=None, d_fake=None):
+        """Given output from discriminator, calculate Wasserstein loss."""
+        if is_discriminator:
+            # Getting output from discriminator: a matrix
+            w_loss = torch.mean(d_fake) - torch.mean(d_real)
+            return w_loss
+        else:
+            # Getting output from generator: an image
+            return -torch.mean(d_fake)
+
 
 # DCGAN model, fully convolutional architecture
 class _netG_1(nn.Module):
@@ -38,7 +54,7 @@ class _netG_1(nn.Module):
         main.append(nn.BatchNorm2d(ngf)),
         main.append(nn.LeakyReLU(0.2, inplace=True)),
         # state size. (ngf) x 32 x 32
-        
+
 
         # Extra layers
         for t in range(n_extra_layers_g):
@@ -134,7 +150,7 @@ class _netD_2(nn.Module):
             nn.Linear(1024, 1024),
             nn.LeakyReLU(inplace=True),
             nn.Dropout(0.5),
-            nn.Linear(1024, 1),            
+            nn.Linear(1024, 1),
             nn.Sigmoid()
             )
     def forward(self, input):
@@ -161,7 +177,7 @@ class _netG_2(nn.Module):
             nn.ReLU(inplace=True),
             nn.Dropout(0.5),
             )
-        
+
         self.decode_fcs = nn.Sequential(
             nn.Linear(1024, 1024),
             nn.ReLU(inplace=True),
